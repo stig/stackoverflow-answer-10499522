@@ -6,13 +6,18 @@
 //  Copyright (c) 2012 __MyCompanyName__. All rights reserved.
 //
 
+#import <SBJson/SBJson.h>
 #import "MasterViewController.h"
 
 #import "DetailViewController.h"
 
-@interface MasterViewController () {
+@interface MasterViewController () <SBJsonStreamParserAdapterDelegate, NSURLConnectionDataDelegate> {
     NSMutableArray *_objects;
+    SBJsonStreamParser *parser;
+    SBJsonStreamParserAdapter *adapter;
 }
+
+- (void)loadDataFromUrl:(NSURL*)url;
 @end
 
 @implementation MasterViewController
@@ -29,6 +34,8 @@
     [super awakeFromNib];
 }
 
+
+
 - (void)viewDidLoad
 {
     [super viewDidLoad];
@@ -39,12 +46,32 @@
     self.navigationItem.rightBarButtonItem = addButton;
 
     self.detailViewController = (DetailViewController *)[[self.splitViewController.viewControllers lastObject] topViewController];
+
+    NSURL *url = [NSURL URLWithString:@"http://www.kb.dk/tekst/mobil/aabningstider_en.json"];
+    [self loadDataFromUrl:url];
+}
+
+- (void)loadDataFromUrl:(NSURL *)url {
+    adapter = [[SBJsonStreamParserAdapter new] init];
+    adapter.delegate = self;
+    adapter.levelsToSkip = 1;
+
+    parser = [[SBJsonStreamParser alloc] init];
+    parser.delegate = adapter;
+
+    NSURLRequest *request = [[NSURLRequest alloc] initWithURL:url];
+    NSURLConnection *connection = [[NSURLConnection alloc] initWithRequest:request delegate:self];
+    [connection start];
 }
 
 - (void)viewDidUnload
 {
     [super viewDidUnload];
+
     // Release any retained subviews of the main view.
+    _objects = nil;
+    parser = nil;
+    adapter = nil;
 }
 
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation
@@ -84,8 +111,8 @@
 {
     UITableViewCell *cell = [tableView dequeueReusableCellWithIdentifier:@"Cell"];
 
-    NSDate *object = [_objects objectAtIndex:indexPath.row];
-    cell.textLabel.text = [object description];
+    NSDictionary *object = [_objects objectAtIndex:indexPath.row];
+    cell.textLabel.text = [object objectForKey:@"name"];
 
     return cell;
 }
@@ -136,6 +163,36 @@
         NSIndexPath *indexPath = [self.tableView indexPathForSelectedRow];
         NSDate *object = [_objects objectAtIndex:indexPath.row];
         [[segue destinationViewController] setDetailItem:object];
+    }
+}
+
+#pragma mark SBJsonStreamParserAdapterDelegate
+
+- (void)parser:(SBJsonStreamParser *)parser foundArray:(NSArray *)array {
+    NSLog(@"Unexpectedly called with array: %@", array);
+}
+
+- (void)parser:(SBJsonStreamParser *)parser foundObject:(NSDictionary *)dict {
+    if (!_objects) _objects = [[NSMutableArray alloc] init];
+    [_objects addObject:dict];
+    [(UITableView *)self.view reloadData];
+}
+
+#pragma mark NSURLConnectionDataDelegate
+
+- (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data {
+    NSLog(@"Got %u bytes of data", data.length);
+    switch ([parser parse: data]) {
+        case SBJsonStreamParserComplete:
+            NSLog(@"Parsed a complete JSON document");
+            break;
+        case SBJsonStreamParserWaitingForData:
+            NSLog(@"Didn't get all the JSON yet... still waiting for more");
+            break;
+        case SBJsonStreamParserError:
+            NSLog(@"Error: %@ - cancelling download", parser.error);
+            [connection cancel];
+            break;
     }
 }
 
